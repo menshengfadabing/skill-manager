@@ -18,3 +18,10 @@ vendor/
 # Test / coverage
 coverage.out
 coverage.html
+
+# Local agent runtime (not source)
+.agents/
+.claude/
+.qwen/
+.codex/
+docs/BACKUP-PATH.txt

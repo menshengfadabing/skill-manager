@@ -1,36 +1,36 @@
 ---
 name: skill-manager
-description: Manage which agent skills are enabled to reduce token waste. Use when the user wants to enable/disable skills, run skill TUI, sync skill directories, switch profiles (codex/default/core), or complains that too many skills dilute attention. Always invoke the `skill` CLI — do not manually create symlinks.
+description: Manage which agent skills are enabled to reduce token waste. Use when the user wants to toggle skills via TUI, sync skill dirs, switch profiles, or complains about too many skills. Always invoke the `skill` CLI — do not manually create symlinks. Default scope is the current git project; use -g for global.
 ---
 
 # skill-manager (companion)
 
-Thin companion for the **`skill` CLI**. Do not re-implement filesystem or symlink steps here.
+Thin companion for the **`skill` CLI**. Do not re-implement filesystem steps here.
 
-## When to use
+## Scope
 
-- User asks to enable/disable/list skills
-- Too many skills / token waste / attention dilution
-- Switch scene profile (`codex`, `default`, `core`)
-- After installing skills via `npx skills` → remind `skill sync`
+- Default: **current git repo** activity + profiles; skill bodies in shared `~/.agents/skills-all`
+- Global activity: `-g` / `--global`
+- Qwen / Cursor / Codex read `.agents/skills` — **no** `.qwen` mirror
+- Do not use project `.codex/skills` as the managed path
+- No per-project `skills-all`
 
-## Commands (run in shell)
+## Commands
 
 ```bash
-skill              # TUI: space toggle, enter apply (both .agents + .claude)
-skill list
-skill enable <name...>
-skill disable <name...>
-skill sync         # ingest real dirs / fix two-level links into skills-all
-skill doctor
-skill use <profile>
-skill save <profile>
-skill init         # core-only profile
-skill paths
+skill                 # TUI
+skill list [-g]
+skill create <name> [-g]
+skill delete <name> [-g] [--force]
+skill profile [-g]
+skill use <name> [-g]
+skill doctor [-g]
+skill sync [--dry-run] [--yes] [-g]
+skill init [--yes] [-g]
 ```
 
 ## Rules
 
-1. Prefer `skill` CLI over editing `~/.agents/skills` or `~/.claude/skills` by hand.
-2. Never create `.claude/skills/X → .agents/skills/X` (two-level). CLI links both sides **directly** to `~/.agents/skills-all/X`.
-3. After external installs land in an activity set, run `skill sync`.
+1. Prefer CLI over hand-editing skill directories.
+2. Never create two-level links (`.claude → .agents/skills → …`).
+3. `sync` / `init` are destructive: confirmation or `--yes`; auto-backup under `.agents/backups/`.

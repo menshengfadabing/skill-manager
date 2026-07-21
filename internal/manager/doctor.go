@@ -21,29 +21,31 @@ func (m *Manager) Doctor() ([]Issue, error) {
 		return nil, err
 	}
 
-	agents, err := m.EnabledOn(m.P.AgentsActive)
-	if err != nil {
-		return nil, err
+	targets := m.P.ActiveTargets()
+	sets := make([]map[string]struct{}, len(targets))
+	labels := []string{"agents", "claude"}
+	for i, active := range targets {
+		names, err := m.EnabledOn(active)
+		if err != nil {
+			return nil, err
+		}
+		sets[i] = toSet(names)
 	}
-	claude, err := m.EnabledOn(m.P.ClaudeActive)
-	if err != nil {
-		return nil, err
-	}
-	aSet := toSet(agents)
-	cSet := toSet(claude)
-
-	for name := range aSet {
-		if _, ok := cSet[name]; !ok {
-			issues = append(issues, Issue{Level: "warn", Path: name, Message: "enabled on agents but missing on claude"})
+	// pairwise drift vs agents (index 0)
+	for i := 1; i < len(sets); i++ {
+		for name := range sets[0] {
+			if _, ok := sets[i][name]; !ok {
+				issues = append(issues, Issue{Level: "warn", Path: name, Message: fmt.Sprintf("enabled on agents but missing on %s", labels[i])})
+			}
+		}
+		for name := range sets[i] {
+			if _, ok := sets[0][name]; !ok {
+				issues = append(issues, Issue{Level: "warn", Path: name, Message: fmt.Sprintf("enabled on %s but missing on agents", labels[i])})
+			}
 		}
 	}
-	for name := range cSet {
-		if _, ok := aSet[name]; !ok {
-			issues = append(issues, Issue{Level: "warn", Path: name, Message: "enabled on claude but missing on agents"})
-		}
-	}
 
-	for _, active := range m.P.ActiveTargets() {
+	for _, active := range targets {
 		entries, err := os.ReadDir(active)
 		if err != nil {
 			continue
@@ -65,7 +67,6 @@ func (m *Manager) Doctor() ([]Issue, error) {
 					target, _ := os.Readlink(full)
 					issues = append(issues, Issue{Level: "warn", Path: full, Message: fmt.Sprintf("symlink not direct to warehouse (→ %s)", target)})
 				}
-				// broken?
 				if _, err := os.Stat(full); err != nil {
 					issues = append(issues, Issue{Level: "error", Path: full, Message: "broken symlink"})
 				}
@@ -75,7 +76,6 @@ func (m *Manager) Doctor() ([]Issue, error) {
 		}
 	}
 
-	// Warehouse without SKILL.md
 	whEntries, _ := os.ReadDir(m.P.Warehouse)
 	for _, e := range whEntries {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {

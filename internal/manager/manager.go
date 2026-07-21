@@ -20,7 +20,7 @@ func New(p paths.Paths) *Manager {
 	return &Manager{P: p}
 }
 
-// SkillNames lists directories in the warehouse that look like skills (have SKILL.md).
+// SkillNames lists skills in the shared global warehouse.
 func (m *Manager) SkillNames() ([]string, error) {
 	entries, err := os.ReadDir(m.P.Warehouse)
 	if err != nil {
@@ -31,19 +31,26 @@ func (m *Manager) SkillNames() ([]string, error) {
 	}
 	var names []string
 	for _, e := range entries {
-		if !e.IsDir() && e.Type()&os.ModeSymlink == 0 {
-			continue
-		}
 		name := e.Name()
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
-		if isSkillDir(filepath.Join(m.P.Warehouse, name)) {
-			names = append(names, name)
+		if !isSkillDir(filepath.Join(m.P.Warehouse, name)) {
+			continue
 		}
+		names = append(names, name)
 	}
 	sort.Strings(names)
 	return names, nil
+}
+
+// ResolveSkillDir returns the absolute skill directory in the shared warehouse.
+func (m *Manager) ResolveSkillDir(name string) (string, error) {
+	dir := filepath.Join(m.P.Warehouse, name)
+	if isSkillDir(dir) {
+		return dir, nil
+	}
+	return "", fmt.Errorf("skill %q not in warehouse %s", name, m.P.Warehouse)
 }
 
 func isSkillDir(dir string) bool {
@@ -85,7 +92,7 @@ func (m *Manager) EnabledAgents() ([]string, error) {
 	return m.EnabledOn(m.P.AgentsActive)
 }
 
-// ResolveWarehouseTarget returns the absolute warehouse path if link points into warehouse.
+// ResolveWarehouseTarget returns the absolute target if link points into the shared warehouse.
 func (m *Manager) ResolveWarehouseTarget(linkPath string) (string, bool) {
 	info, err := os.Lstat(linkPath)
 	if err != nil || info.Mode()&os.ModeSymlink == 0 {
@@ -106,14 +113,17 @@ func (m *Manager) ResolveWarehouseTarget(linkPath string) (string, bool) {
 	return target, false
 }
 
-// IsDirectWarehouseLink reports whether path is a symlink directly into skills-all/<name>.
+// IsDirectWarehouseLink reports whether path is a symlink directly to the resolved skill dir.
 func (m *Manager) IsDirectWarehouseLink(linkPath, name string) bool {
 	target, ok := m.ResolveWarehouseTarget(linkPath)
 	if !ok {
 		return false
 	}
-	want := filepath.Clean(filepath.Join(m.P.Warehouse, name))
-	return target == want
+	want, err := m.ResolveSkillDir(name)
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(target) == filepath.Clean(want)
 }
 
 // IsTwoLevelLink detects .claude → .agents/skills → ... style chains.
@@ -138,7 +148,7 @@ func (m *Manager) IsTwoLevelLink(linkPath string) bool {
 	return false
 }
 
-// Enable creates direct warehouse symlinks on both activity sets.
+// Enable creates direct warehouse symlinks on all activity sets.
 func (m *Manager) Enable(names ...string) error {
 	if err := m.P.EnsureDirs(); err != nil {
 		return err
@@ -148,9 +158,8 @@ func (m *Manager) Enable(names ...string) error {
 		if name == "" {
 			continue
 		}
-		src := filepath.Join(m.P.Warehouse, name)
-		if !isSkillDir(src) {
-			return fmt.Errorf("skill %q not found in warehouse %s", name, m.P.Warehouse)
+		if _, err := m.ResolveSkillDir(name); err != nil {
+			return err
 		}
 		for _, active := range m.P.ActiveTargets() {
 			if err := m.linkOne(active, name); err != nil {
@@ -165,12 +174,15 @@ func (m *Manager) linkOne(activeDir, name string) error {
 	if err := os.MkdirAll(activeDir, 0o755); err != nil {
 		return err
 	}
-	linkPath := filepath.Join(activeDir, name)
-	rel, err := m.P.RelLink(activeDir, name)
+	skillDir, err := m.ResolveSkillDir(name)
 	if err != nil {
 		return err
 	}
-	// Remove existing entry if present
+	linkPath := filepath.Join(activeDir, name)
+	rel, err := m.P.RelLinkTo(activeDir, skillDir)
+	if err != nil {
+		return err
+	}
 	if _, err := os.Lstat(linkPath); err == nil {
 		info, _ := os.Lstat(linkPath)
 		if info.Mode()&os.ModeSymlink == 0 && info.IsDir() {
@@ -223,9 +235,8 @@ func (m *Manager) ApplySet(names []string) error {
 			continue
 		}
 		want[n] = struct{}{}
-		src := filepath.Join(m.P.Warehouse, n)
-		if !isSkillDir(src) {
-			return fmt.Errorf("skill %q not in warehouse; run 'skill sync'", n)
+		if _, err := m.ResolveSkillDir(n); err != nil {
+			return fmt.Errorf("skill %q not in warehouse %s; run skill sync (-g if needed)", n, m.P.Warehouse)
 		}
 	}
 	for _, active := range m.P.ActiveTargets() {

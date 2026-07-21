@@ -1,57 +1,113 @@
 package manager
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
-// ReadProfile loads a profile name list (one skill per line, # comments ok).
+// Profile is the on-disk YAML profile document.
+type Profile struct {
+	Name        string   `yaml:"name"`
+	Description string   `yaml:"description,omitempty"`
+	Skills      []string `yaml:"skills"`
+}
+
+func (m *Manager) profilePath(name string) string {
+	return filepath.Join(m.P.ProfilesDir, name+".yaml")
+}
+
+// ReadProfile loads a profile skill list from YAML.
 func (m *Manager) ReadProfile(name string) ([]string, error) {
-	path := filepath.Join(m.P.ProfilesDir, name+".txt")
-	f, err := os.Open(path)
+	p, err := m.LoadProfile(name)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	var skills []string
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		skills = append(skills, line)
-	}
-	return skills, sc.Err()
+	return p.Skills, nil
 }
 
-// SaveProfile writes the enabled list to profiles/<name>.txt.
-func (m *Manager) SaveProfile(name string, skills []string) error {
+// LoadProfile returns the full profile document.
+func (m *Manager) LoadProfile(name string) (*Profile, error) {
+	b, err := os.ReadFile(m.profilePath(name))
+	if err != nil {
+		return nil, fmt.Errorf("profile %q: %w", name, err)
+	}
+	var p Profile
+	if err := yaml.Unmarshal(b, &p); err != nil {
+		return nil, fmt.Errorf("profile %q: %w", name, err)
+	}
+	if p.Name == "" {
+		p.Name = name
+	}
+	return &p, nil
+}
+
+// WriteProfile writes profiles/<name>.yaml.
+func (m *Manager) WriteProfile(p *Profile) error {
 	if err := os.MkdirAll(m.P.ProfilesDir, 0o755); err != nil {
 		return err
 	}
-	path := filepath.Join(m.P.ProfilesDir, name+".txt")
-	var b strings.Builder
-	b.WriteString("# skill-manager profile: " + name + "\n")
-	for _, s := range skills {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		b.WriteString(s)
-		b.WriteByte('\n')
+	if p.Name == "" {
+		return fmt.Errorf("profile name required")
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o644)
+	if p.Skills == nil {
+		p.Skills = []string{}
+	}
+	b, err := yaml.Marshal(p)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(m.profilePath(p.Name), b, 0o644)
 }
 
-// UseProfile applies a named profile to both activity sets.
+// SaveProfile writes skills into an existing-or-new named profile (TUI/internal).
+func (m *Manager) SaveProfile(name string, skills []string) error {
+	desc := ""
+	if existing, err := m.LoadProfile(name); err == nil {
+		desc = existing.Description
+	}
+	return m.WriteProfile(&Profile{Name: name, Description: desc, Skills: skills})
+}
+
+// CreateProfile creates an empty YAML profile.
+func (m *Manager) CreateProfile(name, description string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("profile name required")
+	}
+	if _, err := os.Stat(m.profilePath(name)); err == nil {
+		return fmt.Errorf("profile %q already exists", name)
+	}
+	return m.WriteProfile(&Profile{Name: name, Description: description, Skills: []string{}})
+}
+
+// DeleteProfile removes a profile file.
+func (m *Manager) DeleteProfile(name string, force bool) error {
+	cur, _ := m.CurrentProfile()
+	if cur == name && !force {
+		return fmt.Errorf("拒绝删除当前正在使用的 profile %q（加 --force 强制）", name)
+	}
+	yp := m.profilePath(name)
+	if err := os.Remove(yp); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("profile %q not found", name)
+		}
+		return err
+	}
+	if cur == name {
+		_ = os.Remove(m.P.CurrentFile)
+	}
+	return nil
+}
+
+// UseProfile applies a named profile to all activity targets in this scope.
 func (m *Manager) UseProfile(name string) error {
 	skills, err := m.ReadProfile(name)
 	if err != nil {
-		return fmt.Errorf("profile %q: %w", name, err)
+		return err
 	}
 	if err := m.ApplySet(skills); err != nil {
 		return err
@@ -79,27 +135,28 @@ func (m *Manager) SetCurrentProfile(name string) error {
 	return os.WriteFile(m.P.CurrentFile, []byte(name+"\n"), 0o644)
 }
 
-// EnsureCoreProfile writes the core profile if missing.
+// CoreSkills is the minimal activity set for skill init.
+var CoreSkills = []string{"skill-manager", "skill-init"}
+
+// EnsureCoreProfile writes/refreshes the core profile to the canonical minimal set.
 func (m *Manager) EnsureCoreProfile() error {
-	path := filepath.Join(m.P.ProfilesDir, "core.txt")
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	}
-	core := []string{"skill-manager", "skill-init"}
-	// Only include names that exist in warehouse
 	var filtered []string
-	for _, n := range core {
-		if isSkillDir(filepath.Join(m.P.Warehouse, n)) {
+	for _, n := range CoreSkills {
+		if _, err := m.ResolveSkillDir(n); err == nil {
 			filtered = append(filtered, n)
 		}
 	}
 	if len(filtered) == 0 {
-		filtered = core // still write; use will error until bundled install
+		filtered = append([]string{}, CoreSkills...)
 	}
-	return m.SaveProfile("core", filtered)
+	return m.WriteProfile(&Profile{
+		Name:        "core",
+		Description: "最小集：skill-manager + skill-init",
+		Skills:      filtered,
+	})
 }
 
-// Init switches to core profile (minimal activity set).
+// Init refreshes core profile and switches to it.
 func (m *Manager) Init() error {
 	if err := m.EnsureCoreProfile(); err != nil {
 		return err
@@ -107,7 +164,7 @@ func (m *Manager) Init() error {
 	return m.UseProfile("core")
 }
 
-// ListProfiles returns profile names (without .txt).
+// ListProfiles returns profile names (.yaml only).
 func (m *Manager) ListProfiles() ([]string, error) {
 	entries, err := os.ReadDir(m.P.ProfilesDir)
 	if err != nil {
@@ -121,8 +178,8 @@ func (m *Manager) ListProfiles() ([]string, error) {
 		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		if strings.HasSuffix(e.Name(), ".txt") {
-			names = append(names, strings.TrimSuffix(e.Name(), ".txt"))
+		if strings.HasSuffix(e.Name(), ".yaml") {
+			names = append(names, strings.TrimSuffix(e.Name(), ".yaml"))
 		}
 	}
 	return names, nil

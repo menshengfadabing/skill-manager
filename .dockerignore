@@ -1,0 +1,14 @@
+.git
+.agents
+.claude
+.qwen
+.codex
+skill
+bin
+dist
+*.md
+!README.md
+docs
+.env*
+.idea
+.vscode
