@@ -35,6 +35,7 @@ func parseFlags(argv []string) flags {
 		a := argv[i]
 		switch a {
 		case "-g", "--global":
+			// Deprecated: skill-manager is global-only. Kept as no-op for old habits.
 			f.global = true
 		case "--yes", "-y":
 			f.yes = true
@@ -63,9 +64,13 @@ func run(argv []string) error {
 	if err != nil {
 		return err
 	}
-	p, err := paths.Resolve(cwd, f.global)
+	// Always global layout; -g is ignored (compat).
+	p, err := paths.Resolve(cwd, true)
 	if err != nil {
 		return err
+	}
+	if f.global {
+		fmt.Fprintln(os.Stderr, "提示: 已改为仅维护全局一套；-g/--global 可省略。")
 	}
 	m := manager.New(p)
 
@@ -82,12 +87,12 @@ func run(argv []string) error {
 		return cmdDoctor(m)
 	case "use":
 		if len(f.args) < 2 {
-			return fmt.Errorf("usage: skill use <profile> [-g]")
+			return fmt.Errorf("usage: skill use <profile>")
 		}
-		return m.UseProfile(f.args[1])
+		return cmdUse(m, f.args[1])
 	case "create":
 		if len(f.args) < 2 {
-			return fmt.Errorf("usage: skill create <profile> [-g]")
+			return fmt.Errorf("usage: skill create <profile>")
 		}
 		desc := ""
 		if len(f.args) > 2 {
@@ -96,11 +101,11 @@ func run(argv []string) error {
 		if err := m.CreateProfile(f.args[1], desc); err != nil {
 			return err
 		}
-		fmt.Printf("created empty profile %q (%s)\n", f.args[1], p.Scope)
+		fmt.Printf("created empty profile %q\n提示: 空配置档 use 后会清空启用集；用 skill 打开 TUI 勾选，或编辑 ~/.agents/profiles/%s.yaml\n", f.args[1], f.args[1])
 		return nil
 	case "delete":
 		if len(f.args) < 2 {
-			return fmt.Errorf("usage: skill delete <profile> [-g] [--force]")
+			return fmt.Errorf("usage: skill delete <profile> [--force]")
 		}
 		if err := m.DeleteProfile(f.args[1], f.force); err != nil {
 			return err
@@ -111,17 +116,42 @@ func run(argv []string) error {
 		return cmdProfile(m)
 	case "init":
 		return cmdInit(m, f)
+	case "log":
+		return cmdLog(m)
+	case "restore":
+		if len(f.args) < 2 {
+			return fmt.Errorf("usage: skill restore <快照id|initial> [--yes]")
+		}
+		return cmdRestore(m, f, f.args[1])
+	case "uninstall":
+		return cmdUninstall(m, f)
 	case "help":
 		printHelp()
 		return nil
 	default:
 		if len(f.args) == 1 {
 			if _, err := os.Stat(filepath.Join(p.ProfilesDir, f.args[0]+".yaml")); err == nil {
-				return m.UseProfile(f.args[0])
+				return cmdUse(m, f.args[0])
 			}
 		}
 		return fmt.Errorf("unknown command %q (try skill help)", f.args[0])
 	}
+}
+
+func cmdUse(m *manager.Manager, name string) error {
+	if err := m.UseProfile(name); err != nil {
+		names, _ := m.ListProfiles()
+		if len(names) > 0 {
+			return fmt.Errorf("%w\n已有配置档: %s", err, strings.Join(names, ", "))
+		}
+		return err
+	}
+	skills, _ := m.ReadProfile(name)
+	fmt.Printf("applied profile %q (%d skills)\n", name, len(skills))
+	if len(skills) == 0 {
+		fmt.Println("提示: 该配置档技能列表为空，各工具工作目录已清空启用项。用 skill 打开 TUI 勾选后会写回当前配置档。")
+	}
+	return nil
 }
 
 func cmdList(m *manager.Manager) error {
@@ -155,7 +185,7 @@ func cmdList(m *manager.Manager) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", name, boolMark(ag), boolMark(cl), ok)
 	}
 	_ = w.Flush()
-	fmt.Printf("\n%d in warehouse, %d enabled (agents) [%s]\n", len(all), len(agents), m.P.Scope)
+	fmt.Printf("\n%d in warehouse, %d enabled (agents)\n", len(all), len(agents))
 	return nil
 }
 
@@ -192,7 +222,7 @@ func cmdDoctor(m *manager.Manager) error {
 }
 
 func cmdProfile(m *manager.Manager) error {
-	fmt.Printf("scope=%s profiles=%s\n", m.P.Scope, m.P.ProfilesDir)
+	fmt.Printf("profiles=%s\n", m.P.ProfilesDir)
 	names, err := m.ListProfiles()
 	if err != nil {
 		return err
@@ -214,13 +244,13 @@ func cmdSync(m *manager.Manager, f flags) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("[dry-run] scope=%s\n", m.P.Scope)
+		fmt.Printf("[dry-run]\n")
 		fmt.Printf("would migrate: %s\n", strings.Join(res.WouldMigrate, ", "))
 		fmt.Printf("would update:  %s\n", strings.Join(res.WouldUpdate, ", "))
 		return nil
 	}
-	prompt := fmt.Sprintf("即将对 [%s] 执行 sync（迁移实体目录、重建软链）。\n仓库: %s\n活动集: .agents/skills + .claude/skills（Qwen 读 .agents，无需镜像）\n会先写入备份到 %s",
-		m.P.Scope, m.P.Warehouse, m.P.BackupsDir)
+	prompt := fmt.Sprintf("即将执行 sync（扫描全局工作目录 + 当前仓库残留目录、迁入仓库、只写回全局启用集）。\n支持: Claude Code / Codex / Cursor / Qwen Code / Pi\n仓库: %s\n备份: %s",
+		m.P.Warehouse, m.P.BackupsDir)
 	if err := manager.Confirm(prompt, f.yes); err != nil {
 		return err
 	}
@@ -234,9 +264,12 @@ func cmdSync(m *manager.Manager, f flags) error {
 
 func cmdInit(m *manager.Manager, f flags) error {
 	cur, _ := m.CurrentProfile()
-	prompt := fmt.Sprintf("即将对 [%s] 执行 init：活动集清空为 core（skill-manager + skill-init）。\n当前 profile: %s\n可之后用 skill use <profile> 恢复；备份目录: %s",
-		m.P.Scope, cur, m.P.BackupsDir)
+	prompt := fmt.Sprintf("即将执行 init：全局各工具工作目录清空为 core（skill-manager + skill-init）。\n当前配置档: %s\n备份目录: %s",
+		cur, m.P.BackupsDir)
 	if err := manager.Confirm(prompt, f.yes); err != nil {
+		return err
+	}
+	if _, err := m.EnsureInitialSnapshot(); err != nil {
 		return err
 	}
 	bak, err := m.BackupSnapshot("init")
@@ -249,18 +282,18 @@ func cmdInit(m *manager.Manager, f flags) error {
 	if err := m.Init(); err != nil {
 		return err
 	}
-	fmt.Printf("switched to core profile [%s]\nbackup: %s\n", m.P.Scope, bak)
+	fmt.Printf("switched to core profile\nbackup: %s\n", bak)
 	return nil
 }
 
 func cmdTUI(m *manager.Manager) error {
-	fmt.Printf("[%s] %s\n", m.P.Scope, m.P.Root)
+	fmt.Printf("global %s\n", m.P.Home)
 	all, err := m.SkillNames()
 	if err != nil {
 		return err
 	}
 	if len(all) == 0 {
-		fmt.Println("warehouse 为空 — 先运行: skill sync   （全局则 skill sync -g）")
+		fmt.Println("warehouse 为空 — 先运行: skill sync")
 		return nil
 	}
 	agents, err := m.EnabledAgents()
@@ -293,7 +326,7 @@ func cmdTUI(m *manager.Manager) error {
 		return err
 	}
 	sort.Strings(enabled)
-	fmt.Printf("applied %d skills → profile %q [%s]\n", len(enabled), cur, m.P.Scope)
+	fmt.Printf("applied %d skills → profile %q\n", len(enabled), cur)
 	return nil
 }
 
@@ -315,46 +348,115 @@ func printSync(res *manager.SyncResult) {
 	fmt.Printf("enabled:  %d skills\n", len(res.Enabled))
 }
 
-func printHelp() {
-	fmt.Print(`skill — Agent Skills 管理（默认项目级；-g 全局）
+func cmdLog(m *manager.Manager) error {
+	snaps, err := m.ListSnapshots()
+	if err != nil {
+		return err
+	}
+	if len(snaps) == 0 {
+		fmt.Println("暂无快照。首次 skill sync / skill init 前会自动留下「用户初始」。")
+		return nil
+	}
+	fmt.Printf("快照目录: %s\n\n", m.P.BackupsDir)
+	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(w, "标记\tID\t时间\t说明")
+	for _, s := range snaps {
+		mark := " "
+		note := s.Label
+		if s.IsInitial {
+			mark = "*"
+			if note == "" || note == "initial" {
+				note = "用户初始（破坏性操作前）"
+			} else {
+				note = "用户初始 · " + note
+			}
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", mark, s.ID, s.Created.Format("2006-01-02 15:04:05"), note)
+	}
+	_ = w.Flush()
+	fmt.Println("\n恢复: skill restore <ID|initial> [--yes]")
+	return nil
+}
 
-范围:
-  默认          当前 git 仓库：.agents/skills + .claude/skills（CC 例外）
-  -g --global   ~/.agents/skills + ~/.claude/skills
-  Qwen/Cursor/Codex 读 .agents/skills，不镜像 .qwen
-  不维护项目 .codex/skills
+func cmdRestore(m *manager.Manager, f flags, ref string) error {
+	id, err := m.ResolveSnapshotID(ref)
+	if err != nil {
+		return err
+	}
+	prompt := fmt.Sprintf("即将把全局工作目录/配置档恢复为快照 %q。\n会先再打一份 pre-restore 备份。\n备份根: %s",
+		id, m.P.BackupsDir)
+	if err := manager.Confirm(prompt, f.yes); err != nil {
+		return err
+	}
+	if err := m.RestoreSnapshot(id); err != nil {
+		return err
+	}
+	fmt.Printf("已恢复快照 %s\n", id)
+	return nil
+}
+
+func cmdUninstall(m *manager.Manager, f flags) error {
+	restore := false
+	for _, a := range f.args[1:] {
+		if a == "--restore-initial" || a == "--to-initial" {
+			restore = true
+		}
+	}
+	prompt := fmt.Sprintf("即将卸载 skill-manager 痕迹。\n会移除: 配置档、备份、各全局工作目录里的 skill-manager/skill-init，以及仓库中的这两个配套 skill。\n不会删除你其它 skill 实体。\n备份根: %s",
+		m.P.BackupsDir)
+	if restore {
+		prompt += "\n并先恢复「用户初始」快照。"
+	} else {
+		prompt += "\n若要先回到装之前状态，请加 --restore-initial。"
+	}
+	if err := manager.Confirm(prompt, f.yes); err != nil {
+		return err
+	}
+	if err := m.Uninstall(manager.UninstallOptions{RestoreInitial: restore, Yes: f.yes}); err != nil {
+		return err
+	}
+	fmt.Println("已卸载 skill-manager 痕迹")
+	return nil
+}
+
+func printHelp() {
+	fmt.Print(`skill — Agent Skills 管理（仅全局一套，用配置档切换启用集）
+
+支持工具: Claude Code / Codex / Cursor / Qwen Code / Pi
+
+模型:
+  仓库目录    ~/.agents/skills-all
+  工作目录    仅用户主目录下各工具路径（见 docs/tools-paths.md）
+  配置档      ~/.agents/profiles/*.yaml   ← 用不同 profile 切换「开哪些」
+  不再维护    项目级启用集 / -g 双 scope（避免全局+项目双倍注入）
 
 命令:
-  skill                 交互界面（空格切换，回车应用，写回当前 profile）
-  skill list            列出 warehouse（项目∪全局继承）与 agents/claude 启用状态
-  skill create <名>     创建空 YAML profile
-  skill delete <名>     删除 profile（当前正在用的需 --force）
-  skill profile         列出 profile（* 为当前）
-  skill use <名>        应用 profile 到本 scope 镜像目录
-  skill <名>            若 profile 存在，等同 use
-  skill doctor          体检（含路径摘要）
-  skill sync            迁移实体、修链、补 bundled（破坏性：需确认或 --yes）
-  skill sync --dry-run  只预览，不写盘
-  skill init            切到 core 最小集（破坏性：需确认或 --yes）
+  skill                 交互界面（空格切换，回车应用，写回当前配置档）
+  skill list            列出仓库与启用状态
+  skill create <名>     创建空配置档
+  skill delete <名>     删除配置档（当前正在用的需 --force）
+  skill profile         列出配置档（* 为当前）
+  skill use <名>        应用配置档到全部全局工作目录
+  skill <名>            若配置档存在，等同 use
+  skill doctor          体检
+  skill sync            迁入仓库并重建全局软链；若在 git 仓库内会顺带摄入项目残留
+  skill sync --dry-run  只预览
+  skill init            全局切到 core 最小集
+  skill log             列出快照（* = 用户初始）
+  skill restore <id>    恢复快照（initial = 用户初始）
+  skill uninstall       清理本工具痕迹；可选 --restore-initial
   skill help            本帮助
 
 标志:
-  -g --global   操作全局 scope
-  --yes -y      跳过破坏性确认（CI/非 TTY 必须）
-  --force       允许删除当前 profile
-  --dry-run     仅 sync：预览
-
-说明:
-  项目/全局共用 ~/.agents/skills-all；项目只管理活动集 + profiles
-  仅 Claude Code 需要 .claude/skills 镜像；Qwen 扫 .agents 即可
-  不做同项目按工具分叉活动集
-
-安全:
-  sync/init 会先备份到 <scope>/.agents/backups/<时间戳>/
-  未加 -g 时不改 ~/.agents 活动集
+  --yes -y             跳过确认
+  --force              允许删除当前配置档
+  --dry-run            仅 sync：预览
+  --restore-initial    仅 uninstall：先恢复用户初始
+  -g --global          已废弃（可省略，行为始终为全局）
 
 环境变量:
-  SKILL_MANAGER_HOME    覆盖 ~/.agents（全局 warehouse 根）
-  SKILL_MANAGER_CLAUDE  覆盖 ~/.claude/skills
+  SKILL_MANAGER_HOME    覆盖 ~/.agents
+  SKILL_MANAGER_CLAUDE  覆盖 Claude 工作目录
+  SKILL_MANAGER_BUNDLED 配套 skill 目录
 `)
 }

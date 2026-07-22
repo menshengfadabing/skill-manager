@@ -2,71 +2,75 @@
 
 管理 Agent Skills：用精简活动集减少 token 浪费。
 
-**默认操作当前 git 仓库（项目级）**；加 `-g` / `--global` 才动用户主目录活动集。
+**只维护全局一套**。不同场景用 **profile** 切换启用集；不再区分项目级 / `-g`，避免全局与项目双倍注入、两套心智负担。
 
 ## 模型
 
 | | 路径 | 职责 |
 | --- | --- | --- |
-| **唯一真源** | `~/.agents/skills-all` | 全部 skill 实体（全局共用） |
-| 项目活动集 | `<repo>/.agents/skills` + `<repo>/.claude/skills` | 本项目启用哪些（软链 → 全局 warehouse） |
-| 全局活动集 | `~/.agents/skills` + `~/.claude/skills` | 全局启用哪些（`-g`） |
-| Profile | `<scope>/.agents/profiles/*.yaml` | 启用清单 |
+| **唯一真源** | `~/.agents/skills-all` | 全部 skill 实体 |
+| 全局工作目录 | `~/.agents/skills` 等（见 `docs/tools-paths.md`） | 各工具实际读取的启用集（软链 → warehouse） |
+| Profile | `~/.agents/profiles/*.yaml` | 启用清单；`skill use <名>` 切换 |
 
-**项目下不再维护 `skills-all`。** 项目 `skill sync` 会把活动集里的实体目录**迁入全局** `skills-all`，再重建项目软链；不改全局活动集。
+若在 git 仓库里执行 `skill sync`，会**顺带摄入**项目下残留的 skill 目录到全局仓库，但**不会**再写回项目级启用集。
 
-| Agent | 读哪里 | 是否单独镜像 |
+| Agent | 读哪里 | skill-manager 是否镜像 |
 | --- | --- | --- |
-| Cursor / Codex / Qwen | `.agents/skills` | 否 |
-| Claude Code | `.claude/skills` | 是（唯一例外） |
+| Codex / Cursor / Qwen / Pi | `~/.agents/skills`（共享）+ 各工具专用目录 | 是（见 `docs/tools-paths.md`） |
+| Claude Code | `~/.claude/skills` | 是 |
+| Cursor 内置 | `~/.cursor/skills-cursor` | **否** |
 
 ## 安装
 
+预编译包（含 Windows）托管在 CloudBase：
+
+https://menshengfadabing-d3ep6tl006fe480-1372800586.tcloudbaseapp.com/
+
+命令说明见同站 [文档](https://menshengfadabing-d3ep6tl006fe480-1372800586.tcloudbaseapp.com/docs.html)。官网源码在仓库 `web/`（Vite + React）。
+
 ```bash
-go install ./cmd/skill
-# 或 Docker
-docker build -t skill-manager:latest .
-docker run --rm -v "$HOME/.agents:/root/.agents" -v "$PWD:/work" -w /work skill-manager:latest list
+# macOS / Linux
+curl -fsSL https://menshengfadabing-d3ep6tl006fe480-1372800586.tcloudbaseapp.com/install.sh | bash
 ```
 
-将二进制拷到 PATH：
+```powershell
+# Windows（PowerShell，勿用 irm|iex）
+iwr -UseBasicParsing https://menshengfadabing-d3ep6tl006fe480-1372800586.tcloudbaseapp.com/install.ps1 -OutFile "$env:TEMP\sm-install.ps1"; powershell -ExecutionPolicy Bypass -File "$env:TEMP\sm-install.ps1"
+```
+
+也可从源码或 Docker：
 
 ```bash
-docker create --name skill-extract skill-manager:latest
-docker cp skill-extract:/usr/local/bin/skill /usr/local/bin/skill
-docker rm skill-extract
+go install ./cmd/skill
+docker build -t skill-manager:latest .
+docker run --rm -v "$HOME/.agents:/root/.agents" skill-manager:latest list
 ```
 
 ## 上手
 
 ```bash
-# 全局：整理真源 + 可选全局活动集
-skill sync -g --yes
-
-# 项目：只选启用集
-cd <仓库>
-skill list
+skill sync --yes          # 实体进仓库 + 重建全局软链
 skill create lean
-skill use lean
-skill
+skill                    # TUI 勾选后回车写回当前配置档
+skill use lean           # 或 skill lean
+skill profile            # 看当前用哪个配置档
 ```
-
-若项目里还有旧的 `<repo>/.agents/skills-all`，可自行删除（真源已迁到 `~/.agents/skills-all` 后）。
 
 ## 命令
 
-默认项目；`-g` 全局活动集。
-
 | 命令 | 说明 |
 | --- | --- |
-| `skill` | TUI 启停（循环滚动）；写回当前 profile |
-| `skill list` | warehouse（全局）+ 本 scope agents/claude |
-| `skill create` / `delete` / `profile` / `use` | YAML profile |
+| `skill` | 交互界面；写回当前配置档 |
+| `skill list` | 仓库目录 + 工作目录启用状态 |
+| `skill create` / `delete` / `profile` / `use` | 配置档 |
 | `skill doctor` | 体检 |
-| `skill sync` | 活动集实体 → **全局** skills-all，再重建本 scope 软链 |
+| `skill sync` | 实体 → 仓库目录，再重建全局工作目录软链 |
 | `skill init` | 切到 core |
+| `skill log` | 列出快照（`*` = 用户初始） |
+| `skill restore <id\|initial>` | 恢复到某次快照 |
+| `skill uninstall [--restore-initial]` | 清理本工具痕迹，可选恢复用户初始 |
 
-标志：`-g` · `--yes` · `--force` · `--dry-run`
+标志：`--yes` · `--force` · `--dry-run` · `--restore-initial`（`-g` 已废弃，可省略）
 
 ## Profile
 
@@ -79,14 +83,14 @@ skills:
 
 ## 安全
 
-`sync`/`init` 先备份到本 scope 的 `.agents/backups/`；非 TTY 需 `--yes`。
+`sync`/`init` 先备份到 `~/.agents/backups/`；非 TTY 需 `--yes`。
 
 ## 环境变量
 
 | 变量 | 含义 |
 | --- | --- |
 | `SKILL_MANAGER_HOME` | 覆盖 `~/.agents`（含共享 skills-all） |
-| `SKILL_MANAGER_CLAUDE` | 覆盖全局 Claude 活动集路径 |
+| `SKILL_MANAGER_CLAUDE` | 覆盖全局 Claude 工作目录 |
 
 ```bash
 go test ./...

@@ -236,7 +236,7 @@ func (m *Manager) ApplySet(names []string) error {
 		}
 		want[n] = struct{}{}
 		if _, err := m.ResolveSkillDir(n); err != nil {
-			return fmt.Errorf("skill %q not in warehouse %s; run skill sync (-g if needed)", n, m.P.Warehouse)
+			return fmt.Errorf("skill %q not in warehouse %s; run skill sync", n, m.P.Warehouse)
 		}
 	}
 	for _, active := range m.P.ActiveTargets() {

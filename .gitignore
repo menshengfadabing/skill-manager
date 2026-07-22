@@ -19,9 +19,14 @@ vendor/
 coverage.out
 coverage.html
 
+# Frontend
+node_modules/
+web/node_modules/
+
 # Local agent runtime (not source)
 .agents/
 .claude/
 .qwen/
 .codex/
 docs/BACKUP-PATH.txt
+docs/腾讯云.md

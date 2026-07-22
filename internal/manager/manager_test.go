@@ -12,20 +12,33 @@ import (
 
 func testPaths(t *testing.T, root string) paths.Paths {
 	t.Helper()
-	agents := filepath.Join(root, "project-agents")
+	agents := filepath.Join(root, ".agents")
 	profiles := filepath.Join(agents, "profiles")
-	wh := filepath.Join(root, "global-agents", "skills-all")
+	agentsActive := filepath.Join(agents, "skills")
+	claude := filepath.Join(root, ".claude", "skills")
+	cursor := filepath.Join(root, ".cursor", "skills")
+	codex := filepath.Join(root, ".codex", "skills")
+	qwen := filepath.Join(root, ".qwen", "skills")
+	pi := filepath.Join(root, ".pi", "agent", "skills")
 	return paths.Paths{
-		Scope:        "project",
+		Scope:        "global",
 		Root:         root,
 		Home:         root,
 		AgentsHome:   agents,
-		Warehouse:    wh, // shared warehouse (simulates ~/.agents/skills-all)
-		AgentsActive: filepath.Join(agents, "skills"),
-		ClaudeActive: filepath.Join(root, ".claude", "skills"),
-		ProfilesDir:  profiles,
-		CurrentFile:  filepath.Join(profiles, ".current"),
-		BackupsDir:   filepath.Join(agents, "backups"),
+		Warehouse:    filepath.Join(agents, "skills-all"),
+		AgentsActive: agentsActive,
+		ClaudeActive: claude,
+		WorkDirs: []paths.WorkDir{
+			{ID: "agents", Path: agentsActive},
+			{ID: "claude", Path: claude},
+			{ID: "cursor", Path: cursor},
+			{ID: "codex", Path: codex},
+			{ID: "qwen", Path: qwen},
+			{ID: "pi", Path: pi},
+		},
+		ProfilesDir: profiles,
+		CurrentFile: filepath.Join(profiles, ".current"),
+		BackupsDir:  filepath.Join(agents, "backups"),
 	}
 }
 
@@ -112,23 +125,25 @@ func TestYAMLProfileCreateDelete(t *testing.T) {
 	}
 }
 
-func TestProjectSyncDoesNotTouchGlobalActivity(t *testing.T) {
+func TestExtraIngestMigratesButDoesNotEnable(t *testing.T) {
 	root := t.TempDir()
 	p := testPaths(t, root)
-	globalActive := filepath.Join(root, "global-agents", "skills")
-	_ = os.MkdirAll(globalActive, 0o755)
-	_ = os.WriteFile(filepath.Join(globalActive, "KEEP"), []byte("1"), 0o644)
+	projectAgents := filepath.Join(root, "repo", ".agents", "skills")
+	p.ExtraIngest = []string{projectAgents}
 
-	mustMkSkill(t, filepath.Join(p.AgentsActive, "only-from-project"))
+	_ = os.MkdirAll(p.AgentsActive, 0o755)
+	_ = os.MkdirAll(p.Warehouse, 0o755)
+	mustMkSkill(t, filepath.Join(projectAgents, "only-from-project"))
+
 	m := manager.New(p)
 	if _, err := m.Sync(manager.SyncOptions{Yes: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(globalActive, "KEEP")); err != nil {
-		t.Fatal("global activity should be untouched")
-	}
 	if _, err := os.Stat(filepath.Join(p.Warehouse, "only-from-project")); err != nil {
 		t.Fatal("should land in shared warehouse")
+	}
+	if _, err := os.Lstat(filepath.Join(p.AgentsActive, "only-from-project")); !os.IsNotExist(err) {
+		t.Fatal("extra ingest must not enable on global work dirs")
 	}
 }
 
@@ -163,5 +178,53 @@ func mustMkSkill(t *testing.T, dir string) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: test\ndescription: t\n---\n"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInitialSnapshotAndRestore(t *testing.T) {
+	root := t.TempDir()
+	p := testPaths(t, root)
+	_ = os.MkdirAll(p.Warehouse, 0o755)
+	_ = os.MkdirAll(p.AgentsActive, 0o755)
+	_ = os.MkdirAll(p.ClaudeActive, 0o755)
+	mustMkSkill(t, filepath.Join(p.AgentsActive, "legacy"))
+	m := manager.New(p)
+
+	initPath, err := m.EnsureInitialSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(initPath) != manager.InitialSnapshotID {
+		t.Fatalf("got %s", initPath)
+	}
+	if _, err := m.EnsureInitialSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+
+	// mutate working dir
+	_ = os.RemoveAll(filepath.Join(p.AgentsActive, "legacy"))
+	mustMkSkill(t, filepath.Join(p.AgentsActive, "other"))
+
+	if err := m.RestoreSnapshot("initial"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(p.AgentsActive, "legacy")); err != nil {
+		t.Fatalf("restore failed: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(p.AgentsActive, "other")); !os.IsNotExist(err) {
+		t.Fatal("expected other removed after restore")
+	}
+	snaps, err := m.ListSnapshots()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, s := range snaps {
+		if s.IsInitial {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected INITIAL in log")
 	}
 }

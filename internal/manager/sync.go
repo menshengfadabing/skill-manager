@@ -38,7 +38,7 @@ type SyncPlan struct {
 // PlanSync inspects activity sets without mutating.
 func (m *Manager) PlanSync() (*SyncPlan, error) {
 	plan := &SyncPlan{}
-	for _, active := range m.P.ActiveTargets() {
+	for _, active := range m.P.IngestTargets() {
 		entries, err := os.ReadDir(active)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -88,6 +88,9 @@ func (m *Manager) Sync(opts SyncOptions) (*SyncResult, error) {
 		return res, nil
 	}
 
+	if _, err := m.EnsureInitialSnapshot(); err != nil {
+		return res, fmt.Errorf("initial snapshot: %w", err)
+	}
 	bak, err := m.BackupSnapshot("sync")
 	if err != nil {
 		return res, fmt.Errorf("backup failed: %w", err)
@@ -101,6 +104,8 @@ func (m *Manager) Sync(opts SyncOptions) (*SyncResult, error) {
 		res.Bundled = bundled
 	}
 
+	// Only global work dirs decide the enable set. ExtraIngest (project leftovers)
+	// may contribute bodies to the warehouse, but must not expand global enables.
 	wantEnabled := map[string]struct{}{}
 	for _, active := range m.P.ActiveTargets() {
 		enabled, err := m.EnabledOn(active)
@@ -112,7 +117,7 @@ func (m *Manager) Sync(opts SyncOptions) (*SyncResult, error) {
 		}
 	}
 
-	for _, active := range m.P.ActiveTargets() {
+	for _, active := range m.P.IngestTargets() {
 		if err := m.ingestActive(active, res); err != nil {
 			return res, err
 		}

@@ -23,8 +23,15 @@ func (m *Manager) Doctor() ([]Issue, error) {
 
 	targets := m.P.ActiveTargets()
 	sets := make([]map[string]struct{}, len(targets))
-	labels := []string{"agents", "claude"}
+	labels := make([]string, len(targets))
 	for i, active := range targets {
+		labels[i] = filepath.Base(filepath.Dir(active)) + "/" + filepath.Base(active)
+		for _, w := range m.P.WorkDirs {
+			if w.Path == active {
+				labels[i] = w.ID
+				break
+			}
+		}
 		names, err := m.EnabledOn(active)
 		if err != nil {
 			return nil, err
@@ -35,12 +42,12 @@ func (m *Manager) Doctor() ([]Issue, error) {
 	for i := 1; i < len(sets); i++ {
 		for name := range sets[0] {
 			if _, ok := sets[i][name]; !ok {
-				issues = append(issues, Issue{Level: "warn", Path: name, Message: fmt.Sprintf("enabled on agents but missing on %s", labels[i])})
+				issues = append(issues, Issue{Level: "warn", Path: name, Message: fmt.Sprintf("enabled on %s but missing on %s", labels[0], labels[i])})
 			}
 		}
 		for name := range sets[i] {
 			if _, ok := sets[0][name]; !ok {
-				issues = append(issues, Issue{Level: "warn", Path: name, Message: fmt.Sprintf("enabled on %s but missing on agents", labels[i])})
+				issues = append(issues, Issue{Level: "warn", Path: name, Message: fmt.Sprintf("enabled on %s but missing on %s", labels[i], labels[0])})
 			}
 		}
 	}
