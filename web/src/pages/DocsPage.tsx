@@ -8,7 +8,6 @@ const NAV = [
   { id: 'snapshot', label: '快照与回滚' },
   { id: 'uninstall', label: '卸载清理' },
   { id: 'companions', label: '配套 skill' },
-  { id: 'flags', label: '标志与环境变量' },
 ] as const
 
 export function DocsPage() {
@@ -147,27 +146,6 @@ skill uninstall --yes`}</pre>
               <p className="name">skill-init</p>
               <p>访谈式「帮项目挑最小 skill 集」：问清项目类型、用哪些 Agent、哪些必须开/必须关，然后通过 <code>skill create</code> / <code>use</code> / 交互界面落地，而不是直接改目录。</p>
             </div>
-          </section>
-
-          <section id="flags" className="docs-sec">
-            <h2>标志与环境变量</h2>
-            <table className="flags">
-              <thead><tr><th>标志</th><th>作用</th></tr></thead>
-              <tbody>
-                <tr><td><code>--yes</code> / <code>-y</code></td><td>跳过破坏性确认</td></tr>
-                <tr><td><code>--force</code></td><td>强删当前配置档等</td></tr>
-                <tr><td><code>--dry-run</code></td><td>仅 sync：预览</td></tr>
-                <tr><td><code>--restore-initial</code></td><td>仅 uninstall：先恢复用户初始</td></tr>
-              </tbody>
-            </table>
-            <table className="flags" style={{ marginTop: '1rem' }}>
-              <thead><tr><th>变量</th><th>含义</th></tr></thead>
-              <tbody>
-                <tr><td><code>SKILL_MANAGER_HOME</code></td><td>覆盖 <code>~/.agents</code></td></tr>
-                <tr><td><code>SKILL_MANAGER_CLAUDE</code></td><td>覆盖 Claude 工作目录</td></tr>
-                <tr><td><code>SKILL_MANAGER_BUNDLED</code></td><td>配套 skill 目录</td></tr>
-              </tbody>
-            </table>
           </section>
         </main>
       </div>
