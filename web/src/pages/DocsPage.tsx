@@ -46,27 +46,27 @@ export function DocsPage() {
                   </tr>
                   <tr>
                     <td><strong>共享工作目录</strong></td>
-                    <td><code>{PATHS.workGlobal}</code></td>
+                    <td><code>{PATHS.workHub}</code></td>
                     <td>Codex / Cursor / Qwen / Pi 共用枢纽</td>
                   </tr>
                   <tr>
                     <td><strong>Claude</strong></td>
-                    <td><code>{PATHS.workClaudeGlobal}</code></td>
+                    <td><code>{PATHS.workClaude}</code></td>
                     <td>Claude Code 专用</td>
                   </tr>
                   <tr>
                     <td><strong>Cursor</strong></td>
-                    <td><code>{PATHS.workCursorGlobal}</code></td>
+                    <td><code>{PATHS.workCursor}</code></td>
                     <td>不管内置 <code>skills-cursor</code></td>
                   </tr>
                   <tr>
                     <td><strong>Codex 遗留</strong></td>
-                    <td><code>{PATHS.workCodexGlobal}</code></td>
+                    <td><code>{PATHS.workCodex}</code></td>
                     <td>与共享枢纽一并扫描</td>
                   </tr>
                   <tr>
                     <td><strong>Qwen / Pi</strong></td>
-                    <td><code>{PATHS.workQwenGlobal}</code>、<code>{PATHS.workPiGlobal}</code></td>
+                    <td><code>{PATHS.workQwen}</code>、<code>{PATHS.workPi}</code></td>
                     <td>专用目录 + 共享枢纽双写</td>
                   </tr>
                   <tr>
@@ -77,7 +77,7 @@ export function DocsPage() {
                 </tbody>
               </table>
             </div>
-            <p className="lead">只维护<strong>全局一套</strong>。不同场景用 <code>skill use &lt;配置档&gt;</code> 切换启用集，不再区分项目级 / <code>-g</code>。</p>
+            <p className="lead">一套仓库 + 工作目录。不同场景用 <code>skill use &lt;配置档&gt;</code> 切换启用集。</p>
           </section>
 
           <section id="commands" className="docs-sec">
@@ -154,7 +154,6 @@ skill uninstall --yes`}</pre>
             <table className="flags">
               <thead><tr><th>标志</th><th>作用</th></tr></thead>
               <tbody>
-                <tr><td><code>-g</code> / <code>--global</code></td><td>已废弃（可省略，行为始终为全局）</td></tr>
                 <tr><td><code>--yes</code> / <code>-y</code></td><td>跳过破坏性确认</td></tr>
                 <tr><td><code>--force</code></td><td>强删当前配置档等</td></tr>
                 <tr><td><code>--dry-run</code></td><td>仅 sync：预览</td></tr>
@@ -165,7 +164,7 @@ skill uninstall --yes`}</pre>
               <thead><tr><th>变量</th><th>含义</th></tr></thead>
               <tbody>
                 <tr><td><code>SKILL_MANAGER_HOME</code></td><td>覆盖 <code>~/.agents</code></td></tr>
-                <tr><td><code>SKILL_MANAGER_CLAUDE</code></td><td>覆盖全局 Claude 工作目录</td></tr>
+                <tr><td><code>SKILL_MANAGER_CLAUDE</code></td><td>覆盖 Claude 工作目录</td></tr>
                 <tr><td><code>SKILL_MANAGER_BUNDLED</code></td><td>配套 skill 目录</td></tr>
               </tbody>
             </table>
